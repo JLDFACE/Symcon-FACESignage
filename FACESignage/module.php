@@ -158,6 +158,11 @@ class FACESignage extends IPSModule
                 $ident = $this->PlayerIdent((string)$p['location'], (string)$p['screen']);
                 $this->MaintainVariable($ident, $p['location'] . ' / ' . $p['screen'],
                     VARIABLETYPE_INTEGER, $profile, $pos, true);
+                // Profil auch bei bereits bestehenden Variablen sicher zuweisen
+                $vid = @$this->GetIDForIdent($ident);
+                if ($vid && IPS_GetVariable($vid)['VariableCustomProfile'] !== $profile) {
+                    IPS_SetVariableCustomProfile($vid, $profile);
+                }
                 $this->EnableAction($ident);
                 $running = (isset($p['playlist']) && $p['playlist'] !== null) ? (string)$p['playlist'] : '';
                 $idx = array_search($running, $names, true);
@@ -283,12 +288,19 @@ class FACESignage extends IPSModule
     private function SyncPlaylistProfile($names)
     {
         $profile = $this->ProfileName();
-        if (!IPS_VariableProfileExists($profile)) {
+        // Wichtig: bei Modul-Reload loescht Destroy() das Profil, der Merker
+        // ueberlebt aber. Ein frisch erzeugtes Profil daher IMMER befuellen,
+        // sonst bliebe es leer ("Profile nicht befuellt").
+        $fresh = !IPS_VariableProfileExists($profile);
+        if ($fresh) {
             IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
             IPS_SetVariableProfileIcon($profile, 'Database');
         }
-        // nur bei Aenderung neu schreiben
-        if (json_encode(json_decode($this->ReadAttributeString('PlaylistNames'), true)) !== json_encode($names)) {
+        if (count($names) === 0) {
+            return $profile;   // keine Playlists bekannt -> altes Profil unangetastet lassen
+        }
+        $stored = json_encode(json_decode($this->ReadAttributeString('PlaylistNames'), true));
+        if ($fresh || $stored !== json_encode($names)) {
             for ($i = 0; $i < count($names); $i++) {
                 IPS_SetVariableProfileAssociation($profile, $i, (string)$names[$i], '', -1);
             }
