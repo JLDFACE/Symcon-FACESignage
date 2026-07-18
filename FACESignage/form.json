@@ -11,6 +11,8 @@
   ],
   "status": [
     { "code": 102, "icon": "active", "caption": "Verbunden" },
-    { "code": 201, "icon": "error", "caption": "Host oder API-Token fehlt" }
+    { "code": 201, "icon": "inactive", "caption": "Host oder API-Token fehlt" },
+    { "code": 202, "icon": "error", "caption": "SignageServer nicht erreichbar" },
+    { "code": 203, "icon": "error", "caption": "Erreichbar, aber abgelehnt - API-Token prüfen" }
   ]
 }

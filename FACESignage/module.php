@@ -93,9 +93,19 @@ class FACESignage extends IPSModule
             $online = !isset($st['error']) && isset($st['players']);
             $this->SetValueIfChanged('Online', $online);
             if (!$online) {
-                $this->SetValueIfChanged('LastError', isset($st['error']) ? (string)$st['error'] : 'keine Antwort');
+                // Erreichbarkeit von der Token-Frage trennen (klare Diagnose):
+                // TCP zum Webserver offen, aber Aufruf gescheitert = Token/Route falsch.
+                $host = trim($this->ReadPropertyString('Host'));
+                if ($host !== '' && $this->TestTcp($host, 80, 1500)) {
+                    $this->SetStatus(203);   // erreichbar, aber abgelehnt
+                    $this->SetValueIfChanged('LastError', 'Erreichbar, aber abgelehnt - API-Token pruefen (Verwaltung -> Einstellungen -> API-Token)');
+                } else {
+                    $this->SetStatus(202);   // gar nicht erreichbar
+                    $this->SetValueIfChanged('LastError', 'SignageServer nicht erreichbar (' . $host . ':80)');
+                }
                 return;
             }
+            $this->SetStatus(102);
             $this->SetValueIfChanged('LastError', '');
 
             $em = isset($st['emergency']) ? $st['emergency'] : null;
@@ -238,6 +248,19 @@ class FACESignage extends IPSModule
             return;
         }
         $this->SetValue($ident, $value);
+    }
+
+    /** Erreichbarkeit des Webservers pruefen (kurzlebiger TCP-Connect). */
+    private function TestTcp($Host, $Port, $ConnectTimeoutMs)
+    {
+        $errno = 0;
+        $errstr = '';
+        $fp = @fsockopen($Host, $Port, $errno, $errstr, max(0.05, $ConnectTimeoutMs / 1000.0));
+        if (is_resource($fp)) {
+            fclose($fp);
+            return true;
+        }
+        return false;
     }
 
     private function Lock()
