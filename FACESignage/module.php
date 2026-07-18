@@ -26,8 +26,13 @@ class FACESignage extends IPSModule
         $this->RegisterPropertyString('Token', '');
         $this->RegisterPropertyInteger('PollInterval', 30);
 
+        // Attribute (persistent): Player-Zuordnung + Stand des Playlist-Profils
+        $this->RegisterAttributeString('PlayerMap', '{}');    // ident -> {ort, screen}
+        $this->RegisterAttributeString('PlaylistNames', '[]'); // Reihenfolge im Profil
+        $this->RegisterAttributeInteger('PlaylistCount', 0);   // fuer Profil-Aufraeumen
+
         // Variables
-        $this->RegisterVariableBoolean('Online', 'SignageServer erreichbar', '~Switch', 10);
+        $this->RegisterVariableBoolean('Online', 'Online', '~Switch', 10);
         $this->DisableAction('Online');
 
         $this->RegisterVariableBoolean('Emergency', 'Notfall', '~Switch', 20);
@@ -49,6 +54,12 @@ class FACESignage extends IPSModule
             return;
         }
 
+        // Bestandsinstanzen: alten Variablennamen auf "Online" ziehen
+        $onlineID = @$this->GetIDForIdent('Online');
+        if ($onlineID && IPS_GetName($onlineID) !== 'Online') {
+            IPS_SetName($onlineID, 'Online');
+        }
+
         $ok = (trim($this->ReadPropertyString('Host')) !== '') &&
               (trim($this->ReadPropertyString('Token')) !== '');
         $this->SetStatus($ok ? 102 : 201);
@@ -65,6 +76,18 @@ class FACESignage extends IPSModule
         }
     }
 
+    public function Destroy()
+    {
+        // instanz-eigene Profile aufraeumen
+        $prefix = 'FSIG.' . $this->InstanceID . '.';
+        foreach (IPS_GetVariableProfileList() as $p) {
+            if (strpos($p, $prefix) === 0) {
+                @IPS_DeleteVariableProfile($p);
+            }
+        }
+        parent::Destroy();
+    }
+
     public function RequestAction($Ident, $Value)
     {
         if ($Ident === 'Emergency') {
@@ -72,6 +95,17 @@ class FACESignage extends IPSModule
                 $this->Notfall('');     // geflaggte Notfall-Playlist des Servers
             } else {
                 $this->NotfallEnde();
+            }
+            return;
+        }
+        // Player-Playlist umschalten (Integer -> Playlist-Name ueber Profil)
+        if (strncmp($Ident, 'PL_', 3) === 0) {
+            $map = json_decode($this->ReadAttributeString('PlayerMap'), true);
+            $names = json_decode($this->ReadAttributeString('PlaylistNames'), true);
+            $i = (int)$Value;
+            if (isset($map[$Ident]) && is_array($names) && isset($names[$i])) {
+                $this->SetValue($Ident, $i);   // optimistisch, Poll bestaetigt
+                $this->Playlist((string)$map[$Ident]['ort'], (string)$map[$Ident]['screen'], (string)$names[$i]);
             }
             return;
         }
@@ -112,18 +146,28 @@ class FACESignage extends IPSModule
             $this->SetValueIfChanged('Emergency', $em !== null);
             $this->SetValueIfChanged('EmergencyPlaylist', $em !== null ? (string)$em : '');
 
-            // eine String-Variable je Player: laufende Playlist (oder offline)
+            // Playlist-Profil aktuell halten (Auswahlliste zum Umschalten)
+            $pl = $this->HttpCall('/api/hook/playlists', null);
+            $names = (isset($pl['playlists']) && is_array($pl['playlists'])) ? array_values($pl['playlists']) : array();
+            $profile = $this->SyncPlaylistProfile($names);
+
+            // je Player eine schaltbare Integer-Variable (aktuelle Playlist)
             $pos = 100;
+            $map = array();
             foreach ($st['players'] as $p) {
                 $ident = $this->PlayerIdent((string)$p['location'], (string)$p['screen']);
                 $this->MaintainVariable($ident, $p['location'] . ' / ' . $p['screen'],
-                    VARIABLETYPE_STRING, '', $pos, true);
-                $value = ((bool)$p['online'])
-                    ? (isset($p['playlist']) && $p['playlist'] !== null ? (string)$p['playlist'] : '-')
-                    : 'offline';
-                $this->SetValueIfChanged($ident, $value);
+                    VARIABLETYPE_INTEGER, $profile, $pos, true);
+                $this->EnableAction($ident);
+                $running = (isset($p['playlist']) && $p['playlist'] !== null) ? (string)$p['playlist'] : '';
+                $idx = array_search($running, $names, true);
+                if ($idx !== false) {
+                    $this->SetValueIfChanged($ident, (int)$idx);
+                }
+                $map[$ident] = array('ort' => (string)$p['location'], 'screen' => (string)$p['screen']);
                 $pos += 10;
             }
+            $this->WriteAttributeString('PlayerMap', json_encode($map));
         } finally {
             // regulaeres Intervall wiederherstellen (PollSoon setzt kurzzeitig 2 s)
             $this->SetTimerInterval('Poll', max(5, (int)$this->ReadPropertyInteger('PollInterval')) * 1000);
@@ -236,6 +280,35 @@ class FACESignage extends IPSModule
     private function PlayerIdent($ort, $screen)
     {
         return 'PL_' . preg_replace('/[^A-Za-z0-9_]/', '_', $ort . '_' . $screen);
+    }
+
+    /** Instanz-eigenes Integer-Profil mit den Playlist-Namen als Assoziationen.
+     *  Nur neu aufbauen, wenn sich die Liste geaendert hat (kein Kernel-Spam). */
+    private function ProfileName()
+    {
+        return 'FSIG.' . $this->InstanceID . '.PL';
+    }
+    private function SyncPlaylistProfile($names)
+    {
+        $profile = $this->ProfileName();
+        if (!IPS_VariableProfileExists($profile)) {
+            IPS_CreateVariableProfile($profile, VARIABLETYPE_INTEGER);
+            IPS_SetVariableProfileIcon($profile, 'Database');
+        }
+        // nur bei Aenderung neu schreiben
+        if (json_encode(json_decode($this->ReadAttributeString('PlaylistNames'), true)) !== json_encode($names)) {
+            for ($i = 0; $i < count($names); $i++) {
+                IPS_SetVariableProfileAssociation($profile, $i, (string)$names[$i], '', -1);
+            }
+            // frueher laengere Liste: ueberzaehlige Assoziationen leeren
+            $prev = (int)$this->ReadAttributeInteger('PlaylistCount');
+            for ($i = count($names); $i < $prev; $i++) {
+                IPS_SetVariableProfileAssociation($profile, $i, '', '', -1);
+            }
+            $this->WriteAttributeString('PlaylistNames', json_encode($names));
+            $this->WriteAttributeInteger('PlaylistCount', count($names));
+        }
+        return $profile;
     }
 
     private function SetValueIfChanged($ident, $value)

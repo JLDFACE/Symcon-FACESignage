@@ -9,8 +9,10 @@ Raspberry-Pi-Basis, siehe Repo `FACE-Signage`) über dessen REST-API.
   Zeitpläne, stellt danach den vorherigen Zustand wieder her) – als schaltbare
   Boolean-Variable **„Notfall"** und per Skript
 - **Playlist wechseln** pro Player
-- **Live-Status**: je registriertem Player eine automatisch angelegte
-  String-Variable mit der laufenden Playlist (bzw. `offline`)
+- **Playlist-Umschaltung pro Player**: je registriertem Player eine
+  automatisch angelegte, schaltbare **Integer-Variable** mit einem
+  Variablenprofil (Auswahlliste aller Playlists) – im WebFront direkt
+  umschaltbar, zeigt zugleich die laufende Playlist an
 - **Thumbnails** der aktuell laufenden Folie (URL für WebFront/IPSView)
 
 ## Einrichtung
