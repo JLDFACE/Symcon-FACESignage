@@ -40,6 +40,8 @@ class FACESignage extends IPSModule
 
         $this->RegisterVariableString('EmergencyPlaylist', 'Aktive Notfall-Playlist', '', 30);
         $this->RegisterVariableString('LastError', 'Letzter Fehler', '~TextBox', 900);
+        // je Player entsteht darunter ein Ordner (Kategorie) mit Online +
+        // Playlist-Umschalter, dynamisch beim Poll (EnsurePlayerFolder).
 
         // Timer (Prefix-Funktion, nicht IPS_RequestAction)
         $this->RegisterTimer('Poll', 0, 'FSIG_Poll($_IPS["TARGET"]);');
@@ -58,6 +60,14 @@ class FACESignage extends IPSModule
         $onlineID = @$this->GetIDForIdent('Online');
         if ($onlineID && IPS_GetName($onlineID) !== 'Online') {
             IPS_SetName($onlineID, 'Online');
+        }
+        // Migration: fruehere flache PL_-Variablen (direkte Instanz-Kinder)
+        // entfernen - Player-Variablen liegen jetzt in Ordnern (Kategorien).
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $cid) {
+            $obj = IPS_GetObject($cid);
+            if ($obj['ObjectType'] === 2 && strncmp($obj['ObjectIdent'], 'PL_', 3) === 0) {
+                @IPS_DeleteVariable($cid);
+            }
         }
 
         $ok = (trim($this->ReadPropertyString('Host')) !== '') &&
@@ -104,7 +114,9 @@ class FACESignage extends IPSModule
             $names = json_decode($this->ReadAttributeString('PlaylistNames'), true);
             $i = (int)$Value;
             if (isset($map[$Ident]) && is_array($names) && isset($names[$i])) {
-                $this->SetValue($Ident, $i);   // optimistisch, Poll bestaetigt
+                if (isset($map[$Ident]['plid'])) {
+                    SetValueInteger((int)$map[$Ident]['plid'], $i);   // optimistisch, Poll bestaetigt
+                }
                 $this->Playlist((string)$map[$Ident]['ort'], (string)$map[$Ident]['screen'], (string)$names[$i]);
             }
             return;
@@ -151,25 +163,19 @@ class FACESignage extends IPSModule
             $names = (isset($pl['playlists']) && is_array($pl['playlists'])) ? array_values($pl['playlists']) : array();
             $profile = $this->SyncPlaylistProfile($names);
 
-            // je Player eine schaltbare Integer-Variable (aktuelle Playlist)
+            // je Player ein Ordner (Kategorie) mit Online + Playlist-Umschalter
             $pos = 100;
             $map = array();
             foreach ($st['players'] as $p) {
-                $ident = $this->PlayerIdent((string)$p['location'], (string)$p['screen']);
-                $this->MaintainVariable($ident, $p['location'] . ' / ' . $p['screen'],
-                    VARIABLETYPE_INTEGER, $profile, $pos, true);
-                // Profil auch bei bereits bestehenden Variablen sicher zuweisen
-                $vid = @$this->GetIDForIdent($ident);
-                if ($vid && IPS_GetVariable($vid)['VariableCustomProfile'] !== $profile) {
-                    IPS_SetVariableCustomProfile($vid, $profile);
-                }
-                $this->EnableAction($ident);
+                $o = $this->EnsurePlayerFolder((string)$p['location'], (string)$p['screen'], $profile, $pos);
+                SetValueBoolean($o['online'], (bool)$p['online']);
                 $running = (isset($p['playlist']) && $p['playlist'] !== null) ? (string)$p['playlist'] : '';
                 $idx = array_search($running, $names, true);
-                if ($idx !== false) {
-                    $this->SetValueIfChanged($ident, (int)$idx);
+                if ($idx !== false && GetValueInteger($o['playlist']) !== (int)$idx) {
+                    SetValueInteger($o['playlist'], (int)$idx);
                 }
-                $map[$ident] = array('ort' => (string)$p['location'], 'screen' => (string)$p['screen']);
+                $map['PL_' . $o['key']] = array(
+                    'ort' => (string)$p['location'], 'screen' => (string)$p['screen'], 'plid' => $o['playlist']);
                 $pos += 10;
             }
             $this->WriteAttributeString('PlayerMap', json_encode($map));
@@ -274,9 +280,53 @@ class FACESignage extends IPSModule
         $this->SetTimerInterval('Poll', 2000);
     }
 
-    private function PlayerIdent($ort, $screen)
+    private function PlayerKey($ort, $screen)
     {
-        return 'PL_' . preg_replace('/[^A-Za-z0-9_]/', '_', $ort . '_' . $screen);
+        return preg_replace('/[^A-Za-z0-9_]/', '_', $ort . '_' . $screen);
+    }
+
+    /** Pro Player einen Ordner (Kategorie) unter der Instanz mit den Variablen
+     *  Online (Anzeige) und Playlist (schaltbar). Idempotent - legt nur an,
+     *  was fehlt. Liefert die Objekt-IDs zurueck. */
+    private function EnsurePlayerFolder($ort, $screen, $profile, $pos)
+    {
+        $key = $this->PlayerKey($ort, $screen);
+
+        $cat = @IPS_GetObjectIDByIdent('P_' . $key, $this->InstanceID);
+        if (!$cat) {
+            $cat = IPS_CreateCategory();
+            IPS_SetParent($cat, $this->InstanceID);
+            IPS_SetIdent($cat, 'P_' . $key);
+        }
+        IPS_SetName($cat, $ort . ' / ' . $screen);
+        IPS_SetPosition($cat, $pos);
+
+        $onl = @IPS_GetObjectIDByIdent('Online', $cat);
+        if (!$onl) {
+            $onl = IPS_CreateVariable(0);           // 0 = Boolean
+            IPS_SetParent($onl, $cat);
+            IPS_SetIdent($onl, 'Online');
+            IPS_SetName($onl, 'Online');
+            IPS_SetVariableCustomProfile($onl, '~Switch');
+            IPS_SetPosition($onl, 10);
+        }
+
+        // Playlist-Umschalter: eindeutiger Ident (PL_<key>) fuers RequestAction
+        $pl = @IPS_GetObjectIDByIdent('PL_' . $key, $cat);
+        if (!$pl) {
+            $pl = IPS_CreateVariable(1);            // 1 = Integer
+            IPS_SetParent($pl, $cat);
+            IPS_SetIdent($pl, 'PL_' . $key);
+            IPS_SetName($pl, 'Playlist');
+            IPS_SetPosition($pl, 20);
+        }
+        if (IPS_GetVariable($pl)['VariableCustomProfile'] !== $profile) {
+            IPS_SetVariableCustomProfile($pl, $profile);
+        }
+        // Aktion an diese Instanz binden -> RequestAction('PL_<key>', <index>)
+        IPS_SetVariableCustomAction($pl, $this->InstanceID);
+
+        return array('key' => $key, 'cat' => $cat, 'online' => $onl, 'playlist' => $pl);
     }
 
     /** Instanz-eigenes Integer-Profil mit den Playlist-Namen als Assoziationen.
