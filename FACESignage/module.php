@@ -123,7 +123,7 @@ class FACESignage extends IPSModule
             return;
         }
         try {
-            $st = $this->HttpCall('/api/hook/status', null);
+            $st = $this->HttpGet('/api/hook/status');
             $online = !isset($st['error']) && isset($st['players']);
             $this->SetValueIfChanged('Online', $online);
             if (!$online) {
@@ -147,7 +147,7 @@ class FACESignage extends IPSModule
             $this->SetValueIfChanged('EmergencyPlaylist', $em !== null ? (string)$em : '');
 
             // Playlist-Profil aktuell halten (Auswahlliste zum Umschalten)
-            $pl = $this->HttpCall('/api/hook/playlists', null);
+            $pl = $this->HttpGet('/api/hook/playlists');
             $names = (isset($pl['playlists']) && is_array($pl['playlists'])) ? array_values($pl['playlists']) : array();
             $profile = $this->SyncPlaylistProfile($names);
 
@@ -178,9 +178,8 @@ class FACESignage extends IPSModule
     /** Playlist eines Players wechseln. */
     public function Playlist(string $Ort, string $Screen, string $Name)
     {
-        $q = '/api/hook/playlist?ort=' . rawurlencode($Ort) . '&screen=' . rawurlencode($Screen)
-           . '&name=' . rawurlencode($Name);
-        $r = $this->HttpCall($q, null);
+        $r = $this->HttpGet('/api/hook/playlist?ort=' . rawurlencode($Ort)
+            . '&screen=' . rawurlencode($Screen) . '&name=' . rawurlencode($Name));
         $this->PollSoon();
         return $this->OkOrLog($r, 'Playlist ' . $Name . ' -> ' . $Ort . '/' . $Screen);
     }
@@ -188,28 +187,24 @@ class FACESignage extends IPSModule
     /** Einzelbild sofort anzeigen. */
     public function Bild(string $Ort, string $Screen, string $Datei)
     {
-        $r = $this->HttpCall('/api/hook/command', array(
-            'location' => $Ort, 'screen' => $Screen,
-            'payload' => array('asset' => array('type' => 'image', 'src' => $Datei))
-        ));
+        $r = $this->HttpGet('/api/hook/asset?type=image&ort=' . rawurlencode($Ort)
+            . '&screen=' . rawurlencode($Screen) . '&src=' . rawurlencode($Datei));
         return $this->OkOrLog($r, 'Bild ' . $Datei . ' -> ' . $Ort . '/' . $Screen);
     }
 
     /** Einzelvideo sofort abspielen. */
     public function Video(string $Ort, string $Screen, string $Datei)
     {
-        $r = $this->HttpCall('/api/hook/command', array(
-            'location' => $Ort, 'screen' => $Screen,
-            'payload' => array('asset' => array('type' => 'video', 'src' => $Datei))
-        ));
+        $r = $this->HttpGet('/api/hook/asset?type=video&ort=' . rawurlencode($Ort)
+            . '&screen=' . rawurlencode($Screen) . '&src=' . rawurlencode($Datei));
         return $this->OkOrLog($r, 'Video ' . $Datei . ' -> ' . $Ort . '/' . $Screen);
     }
 
     /** Notfall ausloesen. Leerer String = im SignageServer geflaggte Playlist. */
     public function Notfall(string $Playlist)
     {
-        $body = ($Playlist !== '') ? array('playlist' => $Playlist) : array('start' => true);
-        $r = $this->HttpCall('/api/hook/emergency', $body);
+        $q = ($Playlist !== '') ? 'name=' . rawurlencode($Playlist) : 'start=1';
+        $r = $this->HttpGet('/api/hook/emergency?' . $q);
         $this->PollSoon();
         return $this->OkOrLog($r, 'NOTFALL' . ($Playlist !== '' ? ' (' . $Playlist . ')' : ''));
     }
@@ -217,7 +212,7 @@ class FACESignage extends IPSModule
     /** Notfall beenden, vorherigen Zustand aller Player wiederherstellen. */
     public function NotfallEnde()
     {
-        $r = $this->HttpCall('/api/hook/emergency', array('end' => true));
+        $r = $this->HttpGet('/api/hook/emergency?end=1');
         $this->PollSoon();
         return $this->OkOrLog($r, 'Notfall beendet');
     }
@@ -234,7 +229,10 @@ class FACESignage extends IPSModule
 
     /* ================= Intern ================= */
 
-    private function HttpCall($path, $json)
+    // Alle Aufrufe laufen als GET mit Query-Parametern - Sys_GetURLContentEx
+    // sendet POST-Bodies auf der SymBox nicht zuverlaessig (faellt auf GET
+    // zurueck). Der SignageServer bietet fuer jede Aktion eine GET-Route.
+    private function HttpGet($path)
     {
         $host = trim($this->ReadPropertyString('Host'));
         $token = trim($this->ReadPropertyString('Token'));
@@ -243,13 +241,7 @@ class FACESignage extends IPSModule
         }
         $url = 'http://' . $host . $path
              . (strpos($path, '?') === false ? '?' : '&') . 'token=' . rawurlencode($token);
-        $opts = array('Timeout' => 5000);
-        if ($json !== null) {
-            $opts['method'] = 'POST';
-            $opts['content'] = json_encode($json);
-            $opts['header'] = 'Content-Type: application/json';
-        }
-        $res = @Sys_GetURLContentEx($url, $opts);
+        $res = @Sys_GetURLContentEx($url, array('Timeout' => 5000));
         $d = json_decode((string)$res, true);
         if (!is_array($d)) {
             return array('error' => 'SignageServer nicht erreichbar (' . $host . ')');
