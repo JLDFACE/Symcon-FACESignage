@@ -1,0 +1,16 @@
+{
+  "elements": [
+    { "type": "ValidationTextBox", "name": "Host", "caption": "SignageServer (IP oder Hostname)" },
+    { "type": "PasswordTextBox", "name": "Token", "caption": "API-Token (Verwaltung → Einstellungen)" },
+    { "type": "NumberSpinner", "name": "PollInterval", "caption": "Abrufintervall (Sekunden)", "minimum": 5, "suffix": "s" }
+  ],
+  "actions": [
+    { "type": "Button", "caption": "Jetzt abrufen", "onClick": "FSIG_Poll($id);" },
+    { "type": "Button", "caption": "Notfall auslösen (geflaggte Playlist)", "onClick": "FSIG_Notfall($id, '');" },
+    { "type": "Button", "caption": "Notfall beenden", "onClick": "FSIG_NotfallEnde($id);" }
+  ],
+  "status": [
+    { "code": 102, "icon": "active", "caption": "Verbunden" },
+    { "code": 201, "icon": "error", "caption": "Host oder API-Token fehlt" }
+  ]
+}

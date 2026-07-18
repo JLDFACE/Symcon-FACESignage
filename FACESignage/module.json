@@ -1,0 +1,11 @@
+{
+  "id": "{7433D615-30A8-465C-BDE7-E87F7172170B}",
+  "name": "FACESignage",
+  "type": 3,
+  "vendor": "FACE GmbH",
+  "aliases": ["FACE Signage Server"],
+  "parentRequirements": [],
+  "childRequirements": [],
+  "implemented": [],
+  "prefix": "FSIG"
+}

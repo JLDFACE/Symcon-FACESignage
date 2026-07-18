@@ -1,0 +1,12 @@
+{
+  "id": "{9B90426A-F2AB-4816-823C-319F597655EA}",
+  "author": "FACE GmbH",
+  "name": "FACE Signage",
+  "url": "https://github.com/JLDFACE/Symcon-FACESignage",
+  "compatibility": {
+    "version": "6.0"
+  },
+  "version": "1.0",
+  "build": 1001,
+  "date": 20260718
+}
