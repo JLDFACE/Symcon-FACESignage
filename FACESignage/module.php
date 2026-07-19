@@ -166,6 +166,7 @@ class FACESignage extends IPSModule
             // je Player ein Ordner (Kategorie) mit Online + Playlist-Umschalter
             $pos = 100;
             $map = array();
+            $keep = array();   // Ident der aktuell vom Server gemeldeten Player-Ordner
             foreach ($st['players'] as $p) {
                 $o = $this->EnsurePlayerFolder((string)$p['location'], (string)$p['screen'], $profile, $pos);
                 SetValueBoolean($o['online'], (bool)$p['online']);
@@ -174,10 +175,13 @@ class FACESignage extends IPSModule
                 if ($idx !== false && GetValueInteger($o['playlist']) !== (int)$idx) {
                     SetValueInteger($o['playlist'], (int)$idx);
                 }
+                $keep['P_' . $o['key']] = true;
                 $map['PL_' . $o['key']] = array(
                     'ort' => (string)$p['location'], 'screen' => (string)$p['screen'], 'plid' => $o['playlist']);
                 $pos += 10;
             }
+            // Auf dem Server geloeschte Player -> ihren Ordner hier entfernen
+            $this->PruneOrphans($keep);
             $this->WriteAttributeString('PlayerMap', json_encode($map));
         } finally {
             // regulaeres Intervall wiederherstellen (PollSoon setzt kurzzeitig 2 s)
@@ -327,6 +331,41 @@ class FACESignage extends IPSModule
         IPS_SetVariableCustomAction($pl, $this->InstanceID);
 
         return array('key' => $key, 'cat' => $cat, 'online' => $onl, 'playlist' => $pl);
+    }
+
+    /** Entfernt Player-Ordner (Ident P_*), die der Server nicht mehr meldet.
+     *  Beruehrt ausschliesslich vom Modul erzeugte Kategorien - die eigenen
+     *  Status-Variablen (Online, Emergency, ...) haben keinen P_-Ident. */
+    private function PruneOrphans($keep)
+    {
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $cid) {
+            $obj = IPS_GetObject($cid);
+            if ($obj['ObjectType'] != 0) {   // 0 = Kategorie
+                continue;
+            }
+            $ident = $obj['ObjectIdent'];
+            if (strncmp($ident, 'P_', 2) !== 0 || isset($keep[$ident])) {
+                continue;
+            }
+            $this->DeleteTree($cid);   // verwaister Player -> weg
+        }
+    }
+
+    /** Loescht ein Objekt samt Unterobjekten (Kinder zuerst). */
+    private function DeleteTree($id)
+    {
+        foreach (IPS_GetChildrenIDs($id) as $cid) {
+            $this->DeleteTree($cid);
+        }
+        switch (IPS_GetObject($id)['ObjectType']) {
+            case 0: IPS_DeleteCategory($id); break;   // Kategorie
+            case 2: IPS_DeleteVariable($id); break;   // Variable
+            case 3: IPS_DeleteScript($id, false); break;
+            case 4: IPS_DeleteEvent($id); break;
+            case 5: IPS_DeleteMedia($id, true); break;
+            case 6: IPS_DeleteLink($id); break;
+            // Typ 1 (Instanz) bewusst nicht loeschen
+        }
     }
 
     /** Instanz-eigenes Integer-Profil mit den Playlist-Namen als Assoziationen.
