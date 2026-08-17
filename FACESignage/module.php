@@ -25,6 +25,9 @@ class FACESignage extends IPSModule
         $this->RegisterPropertyString('Host', '192.168.2.146');
         $this->RegisterPropertyString('Token', '');
         $this->RegisterPropertyInteger('PollInterval', 30);
+        // Vorschaubild je Player: kostet pro Folienwechsel einen Bild-Download,
+        // darum abschaltbar (bei vielen Playern spuerbar).
+        $this->RegisterPropertyBoolean('Preview', true);
 
         // Attribute (persistent): Player-Zuordnung + Stand des Playlist-Profils
         $this->RegisterAttributeString('PlayerMap', '{}');    // ident -> {ort, screen}
@@ -167,6 +170,7 @@ class FACESignage extends IPSModule
             $pos = 100;
             $map = array();
             $keep = array();   // Ident der aktuell vom Server gemeldeten Player-Ordner
+            $preview = (bool)$this->ReadPropertyBoolean('Preview');
             foreach ($st['players'] as $p) {
                 $o = $this->EnsurePlayerFolder((string)$p['location'], (string)$p['screen'], $profile, $pos);
                 SetValueBoolean($o['online'], (bool)$p['online']);
@@ -174,6 +178,22 @@ class FACESignage extends IPSModule
                 $idx = array_search($running, $names, true);
                 if ($idx !== false && GetValueInteger($o['playlist']) !== (int)$idx) {
                     SetValueInteger($o['playlist'], (int)$idx);
+                }
+
+                // Laufende Folie: offline zeigt der Player nichts - dann die
+                // Felder leeren statt den letzten Stand als aktuell auszugeben.
+                $on = (bool)$p['online'];
+                $slide = ($on && isset($p['slide']) && $p['slide'] !== null) ? (string)$p['slide'] : '';
+                $nummer = ($on && !empty($p['position']) && !empty($p['count']))
+                    ? ((int)$p['position'] . ' / ' . (int)$p['count']) : '';
+                // Bild nur holen, wenn eine ANDERE Folie laeuft - sonst laedt
+                // jeder Abruf dasselbe JPEG erneut.
+                $gewechselt = GetValueString($o['slide']) !== $slide;
+                $this->SetObjIfChanged($o['slide'], $slide);
+                $this->SetObjIfChanged($o['position'], $nummer);
+                if ($preview) {
+                    $this->UpdatePreview($o['cat'], $o['key'],
+                        (string)$p['location'], (string)$p['screen'], $gewechselt);
                 }
                 $keep['P_' . $o['key']] = true;
                 $map['PL_' . $o['key']] = array(
@@ -266,18 +286,27 @@ Siegfried Mack"); */
     private function HttpGet($path)
     {
         $host = trim($this->ReadPropertyString('Host'));
-        $token = trim($this->ReadPropertyString('Token'));
-        if ($host === '' || $token === '') {
+        if ($host === '' || trim($this->ReadPropertyString('Token')) === '') {
             return array('error' => 'Host oder Token nicht konfiguriert');
         }
-        $url = 'http://' . $host . $path
-             . (strpos($path, '?') === false ? '?' : '&') . 'token=' . rawurlencode($token);
-        $res = @Sys_GetURLContentEx($url, array('Timeout' => 5000));
-        $d = json_decode((string)$res, true);
+        $d = json_decode($this->HttpGetRaw($path, 5000), true);
         if (!is_array($d)) {
             return array('error' => 'SignageServer nicht erreichbar (' . $host . ')');
         }
         return $d;
+    }
+
+    /** Rohdaten holen (auch binaer, fuers Vorschaubild) - HttpGet erwartet JSON. */
+    private function HttpGetRaw($path, $timeoutMs)
+    {
+        $host = trim($this->ReadPropertyString('Host'));
+        $token = trim($this->ReadPropertyString('Token'));
+        if ($host === '' || $token === '') {
+            return '';
+        }
+        $url = 'http://' . $host . $path
+             . (strpos($path, '?') === false ? '?' : '&') . 'token=' . rawurlencode($token);
+        return (string)@Sys_GetURLContentEx($url, array('Timeout' => $timeoutMs));
     }
 
     private function OkOrLog($r, $what)
@@ -346,7 +375,56 @@ Siegfried Mack"); */
         // Aktion an diese Instanz binden -> RequestAction('PL_<key>', <index>)
         IPS_SetVariableCustomAction($pl, $this->InstanceID);
 
-        return array('key' => $key, 'cat' => $cat, 'online' => $onl, 'playlist' => $pl);
+        // Laufende Folie im Klartext ("angebot.jpg", "Vorlage: Willkommen",
+        // "NDI: STUDIO-PC") und ihre Nummer in der Playlist ("3 / 8").
+        $sl = $this->EnsureString($cat, 'Folie', 'Folie', 30);
+        $po = $this->EnsureString($cat, 'FolieNr', 'Position', 40);
+
+        return array('key' => $key, 'cat' => $cat, 'online' => $onl, 'playlist' => $pl,
+            'slide' => $sl, 'position' => $po);
+    }
+
+    /** String-Variable im Player-Ordner anlegen, falls sie fehlt. */
+    private function EnsureString($cat, $ident, $name, $pos)
+    {
+        $vid = @IPS_GetObjectIDByIdent($ident, $cat);
+        if (!$vid) {
+            $vid = IPS_CreateVariable(3);           // 3 = String
+            IPS_SetParent($vid, $cat);
+            IPS_SetIdent($vid, $ident);
+            IPS_SetName($vid, $name);
+            IPS_SetPosition($vid, $pos);
+        }
+        return $vid;
+    }
+
+    /** Vorschaubild der laufenden Folie als Medienobjekt (Bild) im Player-
+     *  Ordner - in Kachel, WebFront und IPSView direkt anzeigbar. Geladen wird
+     *  nur bei Folienwechsel bzw. beim ersten Anlegen. */
+    private function UpdatePreview($cat, $key, $ort, $screen, $gewechselt)
+    {
+        $mid = @IPS_GetObjectIDByIdent('Vorschau', $cat);
+        if (!$mid) {
+            $mid = IPS_CreateMedia(1);              // 1 = Bild
+            IPS_SetParent($mid, $cat);
+            IPS_SetIdent($mid, 'Vorschau');
+            IPS_SetName($mid, 'Vorschau');
+            IPS_SetPosition($mid, 50);
+            IPS_SetMediaFile($mid, 'media/fsig_' . $this->InstanceID . '_' . $key . '.jpg', false);
+            $gewechselt = true;                     // frisch angelegt -> Bild holen
+        }
+        if (!$gewechselt) {
+            return;
+        }
+        // Nur echte JPEGs uebernehmen: liefert der Server keins (Video ohne
+        // ffmpeg, Vorlage ohne Bild), antwortet er mit JSON - dann soll das
+        // letzte gute Bild stehen bleiben statt eines kaputten.
+        $bild = $this->HttpGetRaw('/api/hook/thumb?ort=' . rawurlencode($ort)
+            . '&screen=' . rawurlencode($screen), 8000);
+        if (strncmp($bild, "\xFF\xD8", 2) === 0) {
+            IPS_SetMediaContent($mid, base64_encode($bild));
+            IPS_SendMediaEvent($mid);
+        }
     }
 
     /** Entfernt Player-Ordner (Ident P_*), die der Server nicht mehr meldet.
@@ -418,6 +496,16 @@ Siegfried Mack"); */
             $this->WriteAttributeInteger('PlaylistCount', count($names));
         }
         return $profile;
+    }
+
+    /** Wie SetValueIfChanged, aber fuer Variablen in den Player-Ordnern -
+     *  die haben keinen Ident auf Instanz-Ebene, nur eine Objekt-ID. */
+    private function SetObjIfChanged($vid, $value)
+    {
+        if (!$vid || GetValue($vid) === $value) {
+            return;
+        }
+        SetValue($vid, $value);
     }
 
     private function SetValueIfChanged($ident, $value)

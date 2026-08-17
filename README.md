@@ -91,6 +91,7 @@ kopieren und Symcon neu starten.
    | **SignageServer (IP oder Hostname)** | IP/Hostname des Pi, z. B. `192.168.2.146` |
    | **API-Token** | Token aus der Signage-Verwaltung → *Einstellungen → API-Token* |
    | **Abrufintervall (Sekunden)** | Poll-Takt (min. 5 s, Standard 30 s) |
+   | **Vorschaubild … laden** | legt je Player ein Medienobjekt mit dem Bild der laufenden Folie an (Standard: an) |
 
 3. **Übernehmen**. Bei korrektem Host + Token wechselt die Instanz auf Status
    **„Verbunden"** und ruft sofort den ersten Status ab.
@@ -118,11 +119,17 @@ FACE Signage Server (Instanz)
 │
 ├─ Meeting / Samsung           (Kategorie = ein Player)
 │  ├─ Online                   (Bool, ~Switch)   – dieser Player erreichbar?
-│  └─ Playlist                 (Integer)         – schaltbar; laufende Playlist
+│  ├─ Playlist                 (Integer)         – schaltbar; laufende Playlist
+│  ├─ Folie                    (String)          – was gerade läuft, im Klartext
+│  ├─ Position                 (String)          – Stelle in der Playlist, z. B. „3 / 8"
+│  └─ Vorschau                 (Medienobjekt)    – Bild der laufenden Folie
 │
 └─ Empfang / Screen1           (Kategorie = weiterer Player)
    ├─ Online
-   └─ Playlist
+   ├─ Playlist
+   ├─ Folie
+   ├─ Position
+   └─ Vorschau
 ```
 
 Die Player-Ordner entstehen **automatisch** beim Abruf – für jeden am
@@ -130,6 +137,15 @@ SignageServer registrierten Player einen. Die **Playlist**-Variable nutzt ein
 instanz-eigenes Variablenprofil (`FSIG.<InstanzID>.PL`) mit allen verfügbaren
 Playlists als Auswahlliste; es wird bei jeder Änderung der Playlist-Liste
 automatisch aktualisiert.
+
+**Folie** benennt die laufende Folie so, wie ein Mensch es täte: `angebot.jpg`,
+`Vorlage: Willkommen`, `NDI: STUDIO-PC (Kamera 1)` oder `Now Playing`. Ist der
+Player offline, sind **Folie** und **Position** leer – er zeigt ja nichts.
+**Vorschau** ist ein Medienobjekt und lässt sich unmittelbar in
+Kachel-Visualisierung, WebFront und IPSView einbinden.
+
+Bestehende Instanzen bekommen die drei neuen Objekte beim nächsten Abruf von
+selbst dazu; es ist nichts nachzutragen.
 
 ---
 
@@ -192,13 +208,33 @@ Gast als im Besprechungsraum. Mehrzeilige Werte sind erlaubt (`
 `), die
 Vorlage bricht sie an derselben Stelle um wie im Editor sichtbar.
 
-### Vorschaubild (Thumbnail)
+### Was läuft gerade? (Folie + Vorschaubild)
 
-Liefert eine Bild-URL der aktuell laufenden Folie – ideal für eine HTML-Box im
-WebFront oder für IPSView:
+Ohne eigenen Code: Im Player-Ordner stehen **Folie** („Vorlage: Willkommen"),
+**Position** („3 / 8") und das Medienobjekt **Vorschau**. Letzteres einfach in
+die Kachel-Visualisierung ziehen – fertig.
+
+Das Bild wird **nur bei einem Folienwechsel** neu geholt, nicht bei jedem
+Abruf. Liefert der Server keins (Video ohne ffmpeg, Vorlage ohne Bild), bleibt
+das letzte gute Bild stehen statt eines kaputten. Wer die Bilder nicht braucht,
+schaltet **Vorschaubild … laden** im Formular ab; bereits angelegte
+Medienobjekte bleiben dann unverändert stehen.
+
+Woher das Bild stammt:
+
+| Folie | Bild |
+|---|---|
+| Bild / Video | Standbild der Datei (erzeugt der SignageServer per ffmpeg) |
+| Gestaltete Folie | Bild der **Vorlage**, das der Vorlagen-Editor beim Speichern ablegt |
+
+> Im Bild einer gestalteten Folie stehen Symcon-Texte mit ihrem *Platzhalter*
+> („‹Gast›"), nicht mit dem echten Wert – das Bild gehört zur Vorlage, der Wert
+> ist je Player verschieden. Den echten Bildschirminhalt zeigt die
+> Signage-Verwaltung (Knopf **Bildschirm**) bei Windows- und Linux-Playern.
+
+**Als reine URL** – etwa für eine eigene `~HTMLBox`-Variable:
 ```php
 $url = FSIG_ThumbUrl(12345, 'Meeting', 'Samsung');
-// z. B. in einer ~HTMLBox-Variable:
 // <img src="{$url}" style="max-width:100%">
 ```
 Die URL enthält einen Zeitstempel (`&t=…`), sodass der Browser stets das
@@ -338,6 +374,8 @@ entfernt. Modul auf Build 1007+ aktualisieren und einmal **Jetzt abrufen**.
 
 | Build | Änderung |
 |---|---|
+| **1009** | Je Player: laufende Folie, Position und Vorschaubild als Medienobjekt |
+| **1008** | `FSIG_Text`: Textfelder gestalteter Folien aus Symcon setzen |
 | **1007** | Am Server gelöschte Player entfernen automatisch ihren Ordner in Symcon |
 | **1006** | Pro Player ein Ordner mit Online + Playlist-Umschalter |
 | **1005** | Variablenprofil nach Modul-Reload zuverlässig wieder befüllen |

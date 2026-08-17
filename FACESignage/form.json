@@ -2,7 +2,8 @@
   "elements": [
     { "type": "ValidationTextBox", "name": "Host", "caption": "SignageServer (IP oder Hostname)" },
     { "type": "PasswordTextBox", "name": "Token", "caption": "API-Token (Verwaltung → Einstellungen)" },
-    { "type": "NumberSpinner", "name": "PollInterval", "caption": "Abrufintervall (Sekunden)", "minimum": 5, "suffix": "s" }
+    { "type": "NumberSpinner", "name": "PollInterval", "caption": "Abrufintervall (Sekunden)", "minimum": 5, "suffix": "s" },
+    { "type": "CheckBox", "name": "Preview", "caption": "Vorschaubild der laufenden Folie je Player laden" }
   ],
   "actions": [
     { "type": "Button", "caption": "Jetzt abrufen", "onClick": "FSIG_Poll($id);" },
