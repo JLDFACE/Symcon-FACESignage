@@ -233,6 +233,22 @@ class FACESignage extends IPSModule
     }
 
     /** URL des Vorschaubilds der aktuell laufenden Folie eines Players. */
+    /* Text einer gestalteten Folie setzen (Vorlagen mit Textfeldern).
+     * $Key ist der Schluessel aus dem Vorlagen-Editor ("Symcon-Text") bzw. der
+     * {platzhalter} im Text. Wird retained gesetzt und ueberlebt Neustarts;
+     * leerer Wert loescht das Feld. Datum, Wochentag und Uhr macht der Player
+     * selbst - die muessen von hier nicht gefuellt werden.
+     *   FSIG_Text($id, 'Foyer', '1', 'gast', "Andre Freitag
+Siegfried Mack"); */
+    public function Text(string $Ort, string $Screen, string $Key, string $Wert)
+    {
+        $r = $this->HttpGet('/api/hook/text?ort=' . rawurlencode($Ort)
+            . '&screen=' . rawurlencode($Screen)
+            . '&key=' . rawurlencode($Key)
+            . '&value=' . rawurlencode($Wert));
+        return $this->OkOrLog($r, 'Text ' . $Key . ' -> ' . $Ort . '/' . $Screen);
+    }
+
     public function ThumbUrl(string $Ort, string $Screen)
     {
         return 'http://' . trim($this->ReadPropertyString('Host'))

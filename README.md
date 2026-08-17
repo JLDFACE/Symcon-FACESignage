@@ -171,6 +171,27 @@ FSIG_Bild(12345,  'Meeting', 'Samsung', 'angebot.jpg');
 FSIG_Video(12345, 'Meeting', 'Samsung', 'trailer.mp4');
 ```
 
+### Text einer gestalteten Folie setzen
+
+Der SignageServer kennt **Vorlagen**: eine feste Gestaltung (Hintergrundbild,
+Schriften, Positionen), in die der Player Textfelder live einsetzt. Datum,
+Wochentag und Uhr macht der Player selbst – die wechselnden Texte kommen von
+hier. Der Schlüssel ist derselbe, der im Vorlagen-Editor als *Symcon-Text*
+hinterlegt ist bzw. als `{platzhalter}` im Text steht.
+
+```php
+FSIG_Text(12345, 'Foyer', '1', 'gast', "Andre Freitag
+Siegfried Mack");
+FSIG_Text(12345, 'Foyer', '1', 'firma', 'Stadt Schüttorf');
+FSIG_Text(12345, 'Foyer', '1', 'gast', '');   // Feld leeren
+```
+
+Die Werte werden **retained** gesetzt: nach einem Neustart des Players steht
+wieder der richtige Gast da. Sie gelten pro Player – im Foyer also ein anderer
+Gast als im Besprechungsraum. Mehrzeilige Werte sind erlaubt (`
+`), die
+Vorlage bricht sie an derselben Stelle um wie im Editor sichtbar.
+
 ### Vorschaubild (Thumbnail)
 
 Liefert eine Bild-URL der aktuell laufenden Folie – ideal für eine HTML-Box im
@@ -197,6 +218,7 @@ Players (**Groß-/Kleinschreibung beachten**).
 | `FSIG_Playlist(int $id, string $Ort, string $Screen, string $Name)` | `bool` | Player auf Playlist `$Name` umschalten |
 | `FSIG_Bild(int $id, string $Ort, string $Screen, string $Datei)` | `bool` | Einzelbild `$Datei` sofort anzeigen |
 | `FSIG_Video(int $id, string $Ort, string $Screen, string $Datei)` | `bool` | Einzelvideo `$Datei` sofort abspielen |
+| `FSIG_Text(int $id, string $Ort, string $Screen, string $Key, string $Wert)` | `bool` | Textfeld einer Vorlage setzen (retained); leerer Wert löscht |
 | `FSIG_Notfall(int $id, string $Playlist)` | `bool` | Notfall auslösen; `''` = geflaggte Playlist |
 | `FSIG_NotfallEnde(int $id)` | `bool` | Notfall beenden, Vorzustand wiederherstellen |
 | `FSIG_ThumbUrl(int $id, string $Ort, string $Screen)` | `string` | URL des Vorschaubilds der laufenden Folie |
