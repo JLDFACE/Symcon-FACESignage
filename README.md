@@ -374,6 +374,7 @@ entfernt. Modul auf Build 1007+ aktualisieren und einmal **Jetzt abrufen**.
 
 | Build | Änderung |
 |---|---|
+| **1010** | Playlists heißen in der Auswahlliste wie im Hub statt „pl_6" (Feld `listen`) |
 | **1009** | Je Player: laufende Folie, Position und Vorschaubild als Medienobjekt |
 | **1008** | `FSIG_Text`: Textfelder gestalteter Folien aus Symcon setzen |
 | **1007** | Am Server gelöschte Player entfernen automatisch ihren Ordner in Symcon |

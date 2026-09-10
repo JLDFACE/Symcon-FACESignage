@@ -31,7 +31,8 @@ class FACESignage extends IPSModule
 
         // Attribute (persistent): Player-Zuordnung + Stand des Playlist-Profils
         $this->RegisterAttributeString('PlayerMap', '{}');    // ident -> {ort, screen}
-        $this->RegisterAttributeString('PlaylistNames', '[]'); // Reihenfolge im Profil
+        $this->RegisterAttributeString('PlaylistNames', '[]'); // Schluessel, Reihenfolge im Profil
+        $this->RegisterAttributeString('PlaylistLabels', '[]'); // Klarnamen dazu (Beschriftung)
         $this->RegisterAttributeInteger('PlaylistCount', 0);   // fuer Profil-Aufraeumen
 
         // Variables
@@ -161,10 +162,34 @@ class FACESignage extends IPSModule
             $this->SetValueIfChanged('Emergency', $em !== null);
             $this->SetValueIfChanged('EmergencyPlaylist', $em !== null ? (string)$em : '');
 
-            // Playlist-Profil aktuell halten (Auswahlliste zum Umschalten)
+            /* Playlist-Profil aktuell halten (Auswahlliste zum Umschalten).
+             *
+             * SCHLUESSEL UND NAME SIND ZWEIERLEI. Geschaltet wird ueber den
+             * Schluessel - aus der Cloud ist das "pl_6", und daran haengen am
+             * Standort die Geraetezuweisung, die Zeitplaene und die
+             * Rueckmeldung des Players. Angezeigt gehoert der Name aus dem Hub
+             * ("Test"). Frueher stand der Schluessel in der Auswahlliste, und
+             * niemand wusste, was pl_6 ist.
+             *
+             * "listen" liefert beides; aeltere Server kennen nur "playlists"
+             * mit den Schluesseln - dann ist der Name eben der Schluessel. */
             $pl = $this->HttpGet('/api/hook/playlists');
-            $names = (isset($pl['playlists']) && is_array($pl['playlists'])) ? array_values($pl['playlists']) : array();
-            $profile = $this->SyncPlaylistProfile($names);
+            $names = array();
+            $labels = array();
+            if (isset($pl['listen']) && is_array($pl['listen'])) {
+                foreach ($pl['listen'] as $e) {
+                    if (!is_array($e) || !isset($e['id'])) {
+                        continue;
+                    }
+                    $names[] = (string)$e['id'];
+                    $name = isset($e['name']) ? trim((string)$e['name']) : '';
+                    $labels[] = ($name !== '') ? $name : (string)$e['id'];
+                }
+            } elseif (isset($pl['playlists']) && is_array($pl['playlists'])) {
+                $names = array_values($pl['playlists']);
+                $labels = $names;
+            }
+            $profile = $this->SyncPlaylistProfile($names, $labels);
 
             // je Player ein Ordner (Kategorie) mit Online + Playlist-Umschalter
             $pos = 100;
@@ -468,8 +493,11 @@ Siegfried Mack"); */
     {
         return 'FSIG.' . $this->InstanceID . '.PL';
     }
-    private function SyncPlaylistProfile($names)
+    private function SyncPlaylistProfile($names, $labels = null)
     {
+        if (!is_array($labels) || count($labels) !== count($names)) {
+            $labels = $names;   // ohne Klarnamen bleibt der Schluessel stehen
+        }
         $profile = $this->ProfileName();
         // Wichtig: bei Modul-Reload loescht Destroy() das Profil, der Merker
         // ueberlebt aber. Ein frisch erzeugtes Profil daher IMMER befuellen,
@@ -482,10 +510,16 @@ Siegfried Mack"); */
         if (count($names) === 0) {
             return $profile;   // keine Playlists bekannt -> altes Profil unangetastet lassen
         }
-        $stored = json_encode(json_decode($this->ReadAttributeString('PlaylistNames'), true));
-        if ($fresh || $stored !== json_encode($names)) {
+        // Der Vergleich muss BEIDES umfassen: wird eine Playlist im Hub nur
+        // umbenannt, aendern sich die Schluessel nicht - das Profil bliebe
+        // sonst auf dem alten Namen stehen.
+        $stored = json_encode(array(
+            json_decode($this->ReadAttributeString('PlaylistNames'), true),
+            json_decode($this->ReadAttributeString('PlaylistLabels'), true)
+        ));
+        if ($fresh || $stored !== json_encode(array($names, $labels))) {
             for ($i = 0; $i < count($names); $i++) {
-                IPS_SetVariableProfileAssociation($profile, $i, (string)$names[$i], '', -1);
+                IPS_SetVariableProfileAssociation($profile, $i, (string)$labels[$i], '', -1);
             }
             // frueher laengere Liste: ueberzaehlige Assoziationen leeren
             $prev = (int)$this->ReadAttributeInteger('PlaylistCount');
@@ -493,6 +527,7 @@ Siegfried Mack"); */
                 IPS_SetVariableProfileAssociation($profile, $i, '', '', -1);
             }
             $this->WriteAttributeString('PlaylistNames', json_encode($names));
+            $this->WriteAttributeString('PlaylistLabels', json_encode($labels));
             $this->WriteAttributeInteger('PlaylistCount', count($names));
         }
         return $profile;
