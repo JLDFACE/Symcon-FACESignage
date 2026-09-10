@@ -1,9 +1,9 @@
 <?php
 
 /*
- * FACE Signage - IP-Symcon Modul
+ * CampaignRED Remote (ehem. FACE Signage) - IP-Symcon Modul
  *
- * Steuert den FACE SignageServer (Raspberry Pi) ueber dessen REST-API.
+ * Steuert den CampaignRED-Server (Standort-Server, Raspberry Pi) ueber dessen Hook-API.
  *
  * Designentscheidungen (kurz):
  * - SymBox-sicher: kein strict_types, keine PHP8-Funktionen, keine Fatals.
@@ -340,7 +340,7 @@ Siegfried Mack"); */
         if (!$ok) {
             $msg = isset($r['error']) ? (string)$r['error'] : 'unbekannter Fehler';
             $this->SetValueIfChanged('LastError', $msg);
-            $this->LogMessage('FACE Signage: ' . $what . ' fehlgeschlagen: ' . $msg, KL_WARNING);
+            $this->LogMessage('CampaignRED Remote: ' . $what . ' fehlgeschlagen: ' . $msg, KL_WARNING);
         } else {
             $this->SendDebug('FSIG', $what . ' OK', 0);
         }
@@ -352,6 +352,27 @@ Siegfried Mack"); */
     private function PollSoon()
     {
         $this->SetTimerInterval('Poll', 2000);
+    }
+
+    /** Aktionsskript fuer die Playlist-Variablen der Player-Ordner (einmal je
+     *  Instanz, Ident 'PlaylistAction'). Inhalt wird bei Bedarf nachgezogen. */
+    private function EnsureActionScript()
+    {
+        $id = @IPS_GetObjectIDByIdent('PlaylistAction', $this->InstanceID);
+        if (!$id) {
+            $id = IPS_CreateScript(0);
+            IPS_SetParent($id, $this->InstanceID);
+            IPS_SetIdent($id, 'PlaylistAction');
+            IPS_SetName($id, 'Playlist-Aktion');
+            IPS_SetPosition($id, 950);
+            IPS_SetHidden($id, true);
+        }
+        $code = "<?php\n// Von CampaignRED Remote verwaltet: Playlist-Wahl eines Players an die Instanz durchreichen.\n"
+              . "IPS_RequestAction(" . $this->InstanceID . ", IPS_GetObject(\$_IPS['VARIABLE'])['ObjectIdent'], (int)\$_IPS['VALUE']);\n";
+        if (IPS_GetScriptContent($id) !== $code) {
+            IPS_SetScriptContent($id, $code);
+        }
+        return (int)$id;
     }
 
     private function PlayerKey($ort, $screen)
@@ -397,8 +418,14 @@ Siegfried Mack"); */
         if (IPS_GetVariable($pl)['VariableCustomProfile'] !== $profile) {
             IPS_SetVariableCustomProfile($pl, $profile);
         }
-        // Aktion an diese Instanz binden -> RequestAction('PL_<key>', <index>)
-        IPS_SetVariableCustomAction($pl, $this->InstanceID);
+        // Aktion an diese Instanz binden -> RequestAction('PL_<key>', <index>).
+        // Symcon 9 nimmt als CustomAction keine Instanz-ID mehr an ("Skript #<id>
+        // existiert nicht", bei jedem Poll) - deshalb ein kleines Aktionsskript
+        // in der Instanz, das den Wert an RequestAction() der Instanz durchreicht.
+        $action = $this->EnsureActionScript();
+        if ((int)IPS_GetVariable($pl)['VariableCustomAction'] !== $action) {
+            IPS_SetVariableCustomAction($pl, $action);
+        }
 
         // Laufende Folie im Klartext ("angebot.jpg", "Vorlage: Willkommen",
         // "NDI: STUDIO-PC") und ihre Nummer in der Playlist ("3 / 8").

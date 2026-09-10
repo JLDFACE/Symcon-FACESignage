@@ -1,6 +1,8 @@
-# FACE Signage – IP-Symcon-Modul
+# CampaignRED Remote – IP-Symcon-Modul
 
-IP-Symcon-Modul zur Steuerung des **FACE SignageServers** (Digital-Signage-System
+*Bis Build 1010 hieß das Modul „FACE Signage“. Funktionen (`FSIG_*`), GUIDs und Instanzen bleiben unverändert.*
+
+IP-Symcon-Modul zur Steuerung des **CampaignRED-Servers** (Digital-Signage-System
 auf Raspberry-Pi-Basis, siehe Repo [`FACE-Signage`](https://github.com/facegmbh/FACE-Signage))
 über dessen REST-API.
 
@@ -83,7 +85,7 @@ kopieren und Symcon neu starten.
 ## Instanz einrichten
 
 1. Neue Instanz anlegen: *Objekt hinzufügen → Instanz →* nach
-   **„FACE Signage Server"** suchen (Hersteller *FACE GmbH*).
+   **„CampaignRED Remote"** suchen (Hersteller *FACE GmbH*).
 2. Im Konfigurationsformular ausfüllen:
 
    | Feld | Bedeutung |
@@ -111,7 +113,7 @@ Im Formular stehen zusätzlich drei Schaltflächen bereit:
 ## Was die Instanz anlegt (Objektbaum)
 
 ```
-FACE Signage Server (Instanz)
+CampaignRED Remote (Instanz)
 ├─ Online                      (Bool, ~Switch)   – SignageServer erreichbar?
 ├─ Notfall                     (Bool, ~Switch)   – schaltbar: Notfall an/aus
 ├─ Aktive Notfall-Playlist     (String)          – Name der laufenden Notfall-Playlist
@@ -374,6 +376,7 @@ entfernt. Modul auf Build 1007+ aktualisieren und einmal **Jetzt abrufen**.
 
 | Build | Änderung |
 |---|---|
+| **1011** | Umbenennung in **CampaignRED Remote**; Playlist-Aktion über ein Aktionsskript in der Instanz (Symcon 9 lehnt Instanz-IDs als CustomAction ab, Warnung bei jedem Poll) |
 | **1010** | Playlists heißen in der Auswahlliste wie im Hub statt „pl_6" (Feld `listen`) |
 | **1009** | Je Player: laufende Folie, Position und Vorschaubild als Medienobjekt |
 | **1008** | `FSIG_Text`: Textfelder gestalteter Folien aus Symcon setzen |
@@ -384,4 +387,4 @@ entfernt. Modul auf Build 1007+ aktualisieren und einmal **Jetzt abrufen**.
 
 ---
 
-© FACE GmbH · Modul für IP-Symcon · Steuert den FACE SignageServer.
+© FACE GmbH · Modul für IP-Symcon · Steuert den CampaignRED-Server.

@@ -3,7 +3,7 @@
   "name": "FACESignage",
   "type": 3,
   "vendor": "FACE GmbH",
-  "aliases": ["FACE Signage Server"],
+  "aliases": ["CampaignRED Remote", "FACE Signage Server"],
   "parentRequirements": [],
   "childRequirements": [],
   "implemented": [],
