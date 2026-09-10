@@ -376,6 +376,7 @@ entfernt. Modul auf Build 1007+ aktualisieren und einmal **Jetzt abrufen**.
 
 | Build | Änderung |
 |---|---|
+| **1012** | Playlist-Profil mit Wertebereich (IPSView zeigte sonst nur den ersten Eintrag) und Eintrag „–“ für Player ohne Playlist |
 | **1011** | Umbenennung in **CampaignRED Remote**; Playlist-Aktion über ein Aktionsskript in der Instanz (Symcon 9 lehnt Instanz-IDs als CustomAction ab, Warnung bei jedem Poll) |
 | **1010** | Playlists heißen in der Auswahlliste wie im Hub statt „pl_6" (Feld `listen`) |
 | **1009** | Je Player: laufende Folie, Position und Vorschaubild als Medienobjekt |

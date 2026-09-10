@@ -117,6 +117,9 @@ class FACESignage extends IPSModule
             $map = json_decode($this->ReadAttributeString('PlayerMap'), true);
             $names = json_decode($this->ReadAttributeString('PlaylistNames'), true);
             $i = (int)$Value;
+            if ($i < 0) {
+                return;                              // "-" ist keine Playlist
+            }
             if (isset($map[$Ident]) && is_array($names) && isset($names[$i])) {
                 if (isset($map[$Ident]['plid'])) {
                     SetValueInteger((int)$map[$Ident]['plid'], $i);   // optimistisch, Poll bestaetigt
@@ -201,7 +204,10 @@ class FACESignage extends IPSModule
                 SetValueBoolean($o['online'], (bool)$p['online']);
                 $running = (isset($p['playlist']) && $p['playlist'] !== null) ? (string)$p['playlist'] : '';
                 $idx = array_search($running, $names, true);
-                if ($idx !== false && GetValueInteger($o['playlist']) !== (int)$idx) {
+                if ($idx === false) {
+                    $idx = -1;                       // keine (bekannte) Playlist zugewiesen
+                }
+                if (GetValueInteger($o['playlist']) !== (int)$idx) {
                     SetValueInteger($o['playlist'], (int)$idx);
                 }
 
@@ -545,6 +551,9 @@ Siegfried Mack"); */
             json_decode($this->ReadAttributeString('PlaylistLabels'), true)
         ));
         if ($fresh || $stored !== json_encode(array($names, $labels))) {
+            // -1 = "keine Playlist" (Player laeuft ohne Zuweisung); Umschalten
+            // auf -1 ist kein Befehl, RequestAction ignoriert den Wert.
+            IPS_SetVariableProfileAssociation($profile, -1, '–', '', -1);
             for ($i = 0; $i < count($names); $i++) {
                 IPS_SetVariableProfileAssociation($profile, $i, (string)$labels[$i], '', -1);
             }
@@ -553,6 +562,9 @@ Siegfried Mack"); */
             for ($i = count($names); $i < $prev; $i++) {
                 IPS_SetVariableProfileAssociation($profile, $i, '', '', -1);
             }
+            // IPSView baut die Auswahlliste aus Min..Max des Profils - ohne den
+            // Bereich zeigt es nur den ersten Eintrag.
+            IPS_SetVariableProfileValues($profile, -1, count($names) - 1, 1);
             $this->WriteAttributeString('PlaylistNames', json_encode($names));
             $this->WriteAttributeString('PlaylistLabels', json_encode($labels));
             $this->WriteAttributeInteger('PlaylistCount', count($names));
