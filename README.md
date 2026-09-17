@@ -46,6 +46,12 @@ Zusätzlich lässt sich eine **Notfall-Playlist** über alle Player auslösen.
   Zeitpläne und stellt danach den vorherigen Zustand wieder her – als
   schaltbare Boolean-Variable **„Notfall"** und per Skript
 - **Einzelbild/-video** ad hoc auf einen Player schicken
+- **Laufzeit, Restlaufzeit, Ende** der laufenden Folie je Player, dazu
+  **Pause** und **Beendet** (Playlist ohne Wiederholung ist durch) – ab Build 1013
+- **Ereignisse vom Player** – *Video zu Ende*, *Playlist zu Ende*, Touch-Tasten –
+  landen als Variablen im Player-Ordner; per Webhook sofort, sonst mit dem
+  nächsten Abruf. Daran hängt man in Symcon ein Ereignis „Bei
+  Variablenaktualisierung“ (ab Build 1013)
 - **Thumbnail-URL** der aktuell laufenden Folie (für WebFront/IPSView/HTML-Box)
 - **Automatische Bereinigung**: am SignageServer gelöschte Player entfernen beim
   nächsten Abruf auch ihren Ordner in Symcon (ab Build 1007)
@@ -121,17 +127,21 @@ CampaignRED Remote (Instanz)
 │
 ├─ Meeting / Samsung           (Kategorie = ein Player)
 │  ├─ Online                   (Bool, ~Switch)   – dieser Player erreichbar?
+│  ├─ Pause                    (Bool, ~Switch)   – Wiedergabe angehalten? (Anzeige)
 │  ├─ Playlist                 (Integer)         – schaltbar; laufende Playlist
 │  ├─ Folie                    (String)          – was gerade läuft, im Klartext
 │  ├─ Position                 (String)          – Stelle in der Playlist, z. B. „3 / 8"
-│  └─ Vorschau                 (Medienobjekt)    – Bild der laufenden Folie
+│  ├─ Laufzeit (s)             (Integer)         – Dauer der laufenden Folie (Video: seine Länge)
+│  ├─ Restlaufzeit (s)         (Integer)         – Sekunden bis zu ihrem Ende, Stand des Abrufs
+│  ├─ Ende                     (Integer, ~UnixTimestamp) – wann sie endet; 0 in der Pause
+│  ├─ Beendet                  (Bool, ~Switch)   – Playlist ohne Wiederholung ist durch und steht
+│  ├─ Vorschau                 (Medienobjekt)    – Bild der laufenden Folie
+│  ├─ Letztes Ereignis         (String)          – „video_ende=messefilm.mp4", „licht=an", …
+│  ├─ Video zu Ende            (String)          – Dateiname; bei jedem Filmende neu gesetzt
+│  └─ Playlist zu Ende         (String)          – Playlist-Schlüssel; bei jedem Listenende neu gesetzt
 │
 └─ Empfang / Screen1           (Kategorie = weiterer Player)
-   ├─ Online
-   ├─ Playlist
-   ├─ Folie
-   ├─ Position
-   └─ Vorschau
+   └─ … dieselben Objekte
 ```
 
 Die Player-Ordner entstehen **automatisch** beim Abruf – für jeden am
@@ -242,6 +252,58 @@ $url = FSIG_ThumbUrl(12345, 'Meeting', 'Samsung');
 Die URL enthält einen Zeitstempel (`&t=…`), sodass der Browser stets das
 aktuelle Bild lädt.
 
+### Wie lange noch? (Laufzeit und Restlaufzeit)
+
+Je Player stehen **Laufzeit (s)**, **Restlaufzeit (s)** und **Ende** im Ordner:
+bei einem Video seine Länge und was davon noch kommt, bei Bildern und
+gestalteten Folien die Standzeit. Der Server rechnet den Rest zum Zeitpunkt des
+Abrufs; die Variablen sind also so frisch wie das Abrufintervall. In der Pause
+steht der Rest still und **Ende** ist 0.
+
+Für eigene Logik direkt vom Server, unabhängig vom Abruftakt:
+```php
+$rest = FSIG_Restlaufzeit(12345, 'Meeting', 'Samsung');   // Sekunden oder null
+$lauf = FSIG_Laufzeit(12345, 'Meeting', 'Samsung');
+```
+
+### Am Ende eines Films etwas tun (Ereignisse vom Player)
+
+Der Player meldet dem Server, wenn ein **Video bis zum Ende durchgelaufen** ist
+(`video_ende`, Wert: Dateiname) und wenn eine **Playlist ohne Wiederholung**
+durch ist (`playlist_ende`, Wert: Playlist-Schlüssel, z. B. `pl_12`). Dazu
+kommen die Tasten von Touch-Seiten mit ihrem eigenen Schlüssel. Das Modul
+setzt daraufhin im Player-Ordner **Letztes Ereignis** (`key=value`) und je nach
+Art **Video zu Ende** bzw. **Playlist zu Ende** – **jedes Mal neu**, auch wenn
+derselbe Film endet wie gestern.
+
+In Symcon hängt man daran ein *Ausgelöstes Ereignis → Bei
+Variablenaktualisierung* (nicht „bei Änderung“, sonst feuert es nur beim
+ersten Mal):
+
+```php
+// Ereignis auf der Variable "Video zu Ende" des Players Meeting / Samsung
+if (GetValueString($_IPS['VARIABLE']) === 'messefilm.mp4') {
+    RequestAction(23456, true);                            // Licht an
+    FSIG_Playlist(12345, 'Meeting', 'Samsung', 'Tagbetrieb');  // zurück zur Schleife
+}
+```
+
+**Sofort statt beim nächsten Abruf:** das Modul registriert einen WebHook
+`/hook/campaignred-<InstanzID>` (steht im Konfigurationsformular). Diese
+Adresse in der CampaignRED-Verwaltung unter *Einstellungen → Symcon-Webhook*
+eintragen, komplett mit Symcon-IP und Port:
+```
+http://<IP des Symcon>:3777/hook/campaignred-12345
+```
+Ohne den Eintrag kommen die Ereignisse trotzdem – mit dem nächsten Abruf, also
+bis zu einem Abrufintervall später. Beides zusammen ist unschädlich: dasselbe
+Ereignis zündet nur einmal. Ereignisse aus der Zeit vor dem ersten Abruf werden
+nicht nachgeholt.
+
+Ein Film, der nicht von vorn anfangen soll, braucht eine Playlist mit „Endlos“
+aus (Playlist-Editor, Kopfzeile). Sie bleibt nach der letzten Folie stehen und
+meldet `playlist_ende`; **Beendet** im Player-Ordner steht dann auf an.
+
 ---
 
 ## Funktionsreferenz (FSIG_*)
@@ -260,6 +322,9 @@ Players (**Groß-/Kleinschreibung beachten**).
 | `FSIG_Notfall(int $id, string $Playlist)` | `bool` | Notfall auslösen; `''` = geflaggte Playlist |
 | `FSIG_NotfallEnde(int $id)` | `bool` | Notfall beenden, Vorzustand wiederherstellen |
 | `FSIG_ThumbUrl(int $id, string $Ort, string $Screen)` | `string` | URL des Vorschaubilds der laufenden Folie |
+| `FSIG_Laufzeit(int $id, string $Ort, string $Screen)` | `int\|null` | Dauer der laufenden Folie in Sekunden (Video: seine Länge) |
+| `FSIG_Restlaufzeit(int $id, string $Ort, string $Screen)` | `int\|null` | Sekunden bis zum Ende der laufenden Folie, frisch vom Server |
+| `FSIG_WebhookUrl(int $id, string $SymconHost)` | `string` | Adresse für *Einstellungen → Symcon-Webhook* in der Verwaltung |
 
 Die `bool`-Funktionen liefern `true` bei Erfolg. Schlägt ein Aufruf fehl, wird
 zusätzlich die Variable **„Letzter Fehler"** gesetzt und eine Warnung ins
@@ -338,8 +403,13 @@ Erreichbarkeitsproblem, 203 = der Server ist da, lehnt aber den Token ab.
 | `GET /api/hook/asset?ort&screen&type&src` | Einzelbild/-video sofort zeigen |
 | `GET /api/hook/emergency?start=1 \| name= \| end=1` | Notfall auslösen/beenden |
 | `GET /api/hook/thumb?ort&screen` | Vorschaubild der laufenden Folie |
+| `GET /api/hook/ereignisse?seit=<id>` | Ereignisse nachholen, die kein Webhook gebracht hat |
+| `GET /api/hook/text?ort&screen&key&value` | Textfeld einer gestalteten Folie setzen |
 
-Alle Routen erwarten den Parameter `token=<API-Token>`.
+Alle Routen erwarten den Parameter `token=<API-Token>`. In Gegenrichtung ruft
+der Server den WebHook `/hook/campaignred-<InstanzID>` dieses Moduls auf
+(`ort`, `screen`, `key`, `value`, `seite`, `ts` als Query-Parameter), sobald
+die Adresse in der Verwaltung eingetragen ist.
 
 ---
 
@@ -376,6 +446,7 @@ entfernt. Modul auf Build 1007+ aktualisieren und einmal **Jetzt abrufen**.
 
 | Build | Änderung |
 |---|---|
+| **1013** | Je Player: Pause, Laufzeit, Restlaufzeit, Ende, Beendet. Ereignisse vom Player (Video zu Ende, Playlist zu Ende, Touch-Tasten) als Variablen – per WebHook sofort, sonst beim Abruf. `FSIG_Laufzeit`, `FSIG_Restlaufzeit`, `FSIG_WebhookUrl` |
 | **1012** | Playlist-Profil mit Wertebereich (IPSView zeigte sonst nur den ersten Eintrag) und Eintrag „–“ für Player ohne Playlist |
 | **1011** | Umbenennung in **CampaignRED Remote**; Playlist-Aktion über ein Aktionsskript in der Instanz (Symcon 9 lehnt Instanz-IDs als CustomAction ab, Warnung bei jedem Poll) |
 | **1010** | Playlists heißen in der Auswahlliste wie im Hub statt „pl_6" (Feld `listen`) |

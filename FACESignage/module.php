@@ -34,6 +34,12 @@ class FACESignage extends IPSModule
         $this->RegisterAttributeString('PlaylistNames', '[]'); // Schluessel, Reihenfolge im Profil
         $this->RegisterAttributeString('PlaylistLabels', '[]'); // Klarnamen dazu (Beschriftung)
         $this->RegisterAttributeInteger('PlaylistCount', 0);   // fuer Profil-Aufraeumen
+        // Ereignisse vom Player (video_ende, playlist_ende, Tipper auf Touch-
+        // Seiten): zuletzt abgeholte Ereignis-ID (-1 = noch nie) und die
+        // zuletzt gesehenen Ereignisse - gegen Doppelzuendung, wenn dasselbe
+        // per Webhook UND beim naechsten Abruf ankommt.
+        $this->RegisterAttributeInteger('EreignisSeit', -1);
+        $this->RegisterAttributeString('EreignisGesehen', '[]');
 
         // Variables
         $this->RegisterVariableBoolean('Online', 'Online', '~Switch', 10);
@@ -73,6 +79,10 @@ class FACESignage extends IPSModule
                 @IPS_DeleteVariable($cid);
             }
         }
+
+        // Webhook fuer Ereignisse vom Server: kommt sofort statt mit dem
+        // naechsten Abruf. Die Adresse steht im Formular.
+        $this->RegisterHook($this->HookPfad());
 
         $ok = (trim($this->ReadPropertyString('Host')) !== '') &&
               (trim($this->ReadPropertyString('Token')) !== '');
@@ -222,6 +232,15 @@ class FACESignage extends IPSModule
                 $gewechselt = GetValueString($o['slide']) !== $slide;
                 $this->SetObjIfChanged($o['slide'], $slide);
                 $this->SetObjIfChanged($o['position'], $nummer);
+                // Laufzeit der Folie, Rest und Endzeitpunkt - so frisch wie der
+                // Abruf (der Server rechnet den Rest zum Abrufzeitpunkt). Offline
+                // oder nichts Messbares: 0, kein alter Wert, der weiterzaehlt.
+                // "Beendet": eine Playlist ohne Wiederholung ist durch und steht.
+                $this->SetObjIfChanged($o['pause'], $on && !empty($p['paused']));
+                $this->SetObjIfChanged($o['laufzeit'], $on && isset($p['laufzeit']) ? (int)$p['laufzeit'] : 0);
+                $this->SetObjIfChanged($o['rest'], $on && isset($p['rest']) ? (int)$p['rest'] : 0);
+                $this->SetObjIfChanged($o['ende'], $on && isset($p['ende']) ? (int)$p['ende'] : 0);
+                $this->SetObjIfChanged($o['beendet'], $on && !empty($p['beendet']));
                 if ($preview) {
                     $this->UpdatePreview($o['cat'], $o['key'],
                         (string)$p['location'], (string)$p['screen'], $gewechselt);
@@ -234,6 +253,9 @@ class FACESignage extends IPSModule
             // Auf dem Server geloeschte Player -> ihren Ordner hier entfernen
             $this->PruneOrphans($keep);
             $this->WriteAttributeString('PlayerMap', json_encode($map));
+            // Ereignisse nachholen, die kein Webhook gebracht hat (oder keiner
+            // eingetragen ist) - dann eben mit dem Takt des Abrufs.
+            $this->EreignisseAbholen();
         } finally {
             // regulaeres Intervall wiederherstellen (PollSoon setzt kurzzeitig 2 s)
             $this->SetTimerInterval('Poll', max(5, (int)$this->ReadPropertyInteger('PollInterval')) * 1000);
@@ -309,7 +331,186 @@ Siegfried Mack"); */
              . '&t=' . time();
     }
 
+    /* ---- Laufzeit und Restlaufzeit der laufenden Folie (Sekunden) ----
+     * Bei einem Video seine Laenge bzw. was davon noch kommt, sonst die
+     * Standzeit der Folie. Der Server rechnet den Rest zum Abrufzeitpunkt, der
+     * Wert ist also frisch, egal wie alt die letzte Statusmeldung des Players
+     * ist. null, wenn der Player offline ist oder nichts Messbares laeuft.
+     * Dieselben Werte stehen je Player in den Variablen "Laufzeit (s)" und
+     * "Restlaufzeit (s)" - dort aber nur so frisch wie der letzte Abruf.
+     * Fuer "genau am Ende" ist das Ereignis der bessere Weg: Variable "Video zu
+     * Ende" bzw. "Playlist zu Ende" im Player-Ordner, s. ProcessHookData(). */
+    public function Restlaufzeit(string $Ort, string $Screen)
+    {
+        $p = $this->PlayerStatus($Ort, $Screen);
+        return ($p && !empty($p['online']) && isset($p['rest'])) ? (int)$p['rest'] : null;
+    }
+
+    public function Laufzeit(string $Ort, string $Screen)
+    {
+        $p = $this->PlayerStatus($Ort, $Screen);
+        return ($p && !empty($p['online']) && isset($p['laufzeit'])) ? (int)$p['laufzeit'] : null;
+    }
+
+    /** Adresse fuer die CampaignRED-Verwaltung (Einstellungen -> Symcon-Webhook),
+     *  damit Ereignisse sofort ankommen. $SymconHost: IP oder Name dieses
+     *  Symcon-Rechners, wie der Server ihn erreicht. */
+    public function WebhookUrl(string $SymconHost)
+    {
+        return 'http://' . $SymconHost . ':3777' . $this->HookPfad();
+    }
+
+    /** Formular mit der Webhook-Adresse dieser Instanz ergaenzen. */
+    public function GetConfigurationForm()
+    {
+        $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
+        $form['elements'][] = array('type' => 'Label', 'caption' =>
+            'Ereignisse sofort (Video zu Ende, Playlist zu Ende, Touch-Tasten): in der CampaignRED-Verwaltung '
+            . 'unter Einstellungen -> Symcon-Webhook eintragen:  http://<IP dieses Symcon>:3777' . $this->HookPfad()
+            . '   Ohne Eintrag kommen die Ereignisse mit dem naechsten Abruf.');
+        return json_encode($form);
+    }
+
+    /* ---- Ereignisse vom Server ----
+     * Der Server ruft GET /hook/campaignred-<InstanzID>?ort=&screen=&key=&value=&seite=&ts=
+     * auf, sobald ein Player etwas meldet: "video_ende" (Wert: Dateiname, wenn
+     * ein Video bis zum Ende durchgelaufen ist), "playlist_ende" (Wert:
+     * Playlist-Schluessel, wenn eine Liste ohne Wiederholung durch ist) oder
+     * eine Touch-Taste mit eigenem Schluessel. Jedes Ereignis setzt im Player-
+     * Ordner "Letztes Ereignis" (key=value) und, je nach Art, "Video zu Ende"
+     * bzw. "Playlist zu Ende" - IMMER neu gesetzt, auch bei gleichem Wert: ein
+     * Symcon-Ereignis "Bei Variablenaktualisierung" an dieser Variable feuert
+     * damit bei jedem Filmende, nicht nur beim ersten. */
+    protected function ProcessHookData()
+    {
+        $ort = isset($_GET['ort']) ? (string)$_GET['ort'] : '';
+        $screen = isset($_GET['screen']) ? (string)$_GET['screen'] : '';
+        $key = isset($_GET['key']) ? (string)$_GET['key'] : '';
+        if ($ort === '' || $key === '') {
+            http_response_code(400);
+            echo 'ort und key erwartet';
+            return;
+        }
+        $ts = isset($_GET['ts']) ? (int)$_GET['ts'] : (int)(microtime(true) * 1000);
+        $this->Ereignis($ort, $screen, $key, isset($_GET['value']) ? (string)$_GET['value'] : '', $ts);
+        echo 'ok';
+    }
+
     /* ================= Intern ================= */
+
+    private function HookPfad()
+    {
+        return '/hook/campaignred-' . $this->InstanceID;
+    }
+
+    /** Pfad beim WebHook Control eintragen (Standardweg der Symcon-Module). */
+    private function RegisterHook($WebHook)
+    {
+        $ids = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}');
+        if (count($ids) === 0) {
+            return;
+        }
+        $hooks = json_decode(IPS_GetProperty($ids[0], 'Hooks'), true);
+        if (!is_array($hooks)) {
+            $hooks = array();
+        }
+        $found = false;
+        foreach ($hooks as $index => $hook) {
+            if ($hook['Hook'] == $WebHook) {
+                if ($hook['TargetID'] == $this->InstanceID) {
+                    return;                          // steht schon richtig drin
+                }
+                $hooks[$index]['TargetID'] = $this->InstanceID;
+                $found = true;
+            }
+        }
+        if (!$found) {
+            $hooks[] = array('Hook' => $WebHook, 'TargetID' => $this->InstanceID);
+        }
+        IPS_SetProperty($ids[0], 'Hooks', json_encode($hooks));
+        IPS_ApplyChanges($ids[0]);
+    }
+
+    /** Status eines einzelnen Players (eine Zeile aus /api/hook/status). */
+    private function PlayerStatus($ort, $screen)
+    {
+        $r = $this->HttpGet('/api/hook/status?ort=' . rawurlencode($ort) . '&screen=' . rawurlencode($screen));
+        return (isset($r['players'][0]) && is_array($r['players'][0])) ? $r['players'][0] : null;
+    }
+
+    /** Ein Ereignis verarbeiten - egal ob per Webhook oder beim Abruf gekommen.
+     *  Dieselbe Marke (Player, Schluessel, Zeitstempel) zuendet nur einmal. */
+    private function Ereignis($ort, $screen, $key, $value, $ts)
+    {
+        $marke = $ort . '/' . $screen . '/' . $key . '/' . $ts;
+        $gesehen = json_decode($this->ReadAttributeString('EreignisGesehen'), true);
+        if (!is_array($gesehen)) {
+            $gesehen = array();
+        }
+        if (in_array($marke, $gesehen, true)) {
+            return false;
+        }
+        $gesehen[] = $marke;
+        while (count($gesehen) > 100) {
+            array_shift($gesehen);
+        }
+        $this->WriteAttributeString('EreignisGesehen', json_encode($gesehen));
+
+        $cat = @IPS_GetObjectIDByIdent('P_' . $this->PlayerKey($ort, $screen), $this->InstanceID);
+        if (!$cat) {
+            // Player noch nicht abgeholt: der naechste Poll legt den Ordner an,
+            // dieses Ereignis ist dann aber vorbei. Loggen statt schweigen.
+            $this->LogMessage('CampaignRED Remote: Ereignis ' . $key . ' von unbekanntem Player ' . $ort . '/' . $screen, KL_NOTIFY);
+            return false;
+        }
+        $ev = @IPS_GetObjectIDByIdent('Ereignis', $cat);
+        if ($ev) {
+            SetValueString($ev, $key . '=' . $value);
+        }
+        if ($key === 'video_ende') {
+            $v = @IPS_GetObjectIDByIdent('VideoEnde', $cat);
+            if ($v) {
+                SetValueString($v, $value);
+            }
+        } elseif ($key === 'playlist_ende') {
+            $v = @IPS_GetObjectIDByIdent('PlaylistEnde', $cat);
+            if ($v) {
+                SetValueString($v, $value);
+            }
+        }
+        $this->SendDebug('FSIG', 'Ereignis ' . $ort . '/' . $screen . ': ' . $key . '=' . $value, 0);
+        return true;
+    }
+
+    /** Ereignisse beim Abruf nachholen (/api/hook/ereignisse?seit=<id>).
+     *  Beim allerersten Lauf nur den Stand merken: alte Tipper von gestern
+     *  sollen nicht heute das Licht schalten. Startet der Server neu, beginnen
+     *  seine IDs wieder bei null - dann ebenfalls nur neu aufsetzen. */
+    private function EreignisseAbholen()
+    {
+        $seit = (int)$this->ReadAttributeInteger('EreignisSeit');
+        $r = $this->HttpGet('/api/hook/ereignisse?seit=' . max(0, $seit));
+        if (!isset($r['ereignisse']) || !is_array($r['ereignisse'])) {
+            return;                                  // aelterer Server ohne diese Route
+        }
+        $neuestes = isset($r['neuestes']) ? (int)$r['neuestes'] : $seit;
+        if ($seit < 0 || $neuestes < $seit) {
+            $this->WriteAttributeInteger('EreignisSeit', $neuestes);
+            return;
+        }
+        foreach ($r['ereignisse'] as $e) {
+            if (!is_array($e) || !isset($e['key'])) {
+                continue;
+            }
+            $this->Ereignis(isset($e['location']) ? (string)$e['location'] : '',
+                isset($e['screen']) ? (string)$e['screen'] : '',
+                (string)$e['key'], isset($e['value']) ? (string)$e['value'] : '',
+                isset($e['ts']) ? (int)$e['ts'] : 0);
+        }
+        if ($neuestes !== $seit) {
+            $this->WriteAttributeInteger('EreignisSeit', $neuestes);
+        }
+    }
 
     // Alle Aufrufe laufen als GET mit Query-Parametern - Sys_GetURLContentEx
     // sendet POST-Bodies auf der SymBox nicht zuverlaessig (faellt auf GET
@@ -437,21 +638,44 @@ Siegfried Mack"); */
         // "NDI: STUDIO-PC") und ihre Nummer in der Playlist ("3 / 8").
         $sl = $this->EnsureString($cat, 'Folie', 'Folie', 30);
         $po = $this->EnsureString($cat, 'FolieNr', 'Position', 40);
+        // Angehalten, Laufzeit/Rest/Ende der Folie, Liste ohne Wiederholung durch
+        $pa = $this->EnsureVar($cat, 'Pause', 'Pause', 0, '~Switch', 15);
+        $lz = $this->EnsureVar($cat, 'Laufzeit', 'Laufzeit (s)', 1, '', 42);
+        $re = $this->EnsureVar($cat, 'Restlaufzeit', 'Restlaufzeit (s)', 1, '', 44);
+        $en = $this->EnsureVar($cat, 'Ende', 'Ende', 1, '~UnixTimestamp', 46);
+        $be = $this->EnsureVar($cat, 'Beendet', 'Beendet', 0, '~Switch', 48);
+        // Ereignisse (s. ProcessHookData): werden bei jedem Eintreffen neu
+        // gesetzt - daran haengt man in Symcon "Bei Variablenaktualisierung".
+        $this->EnsureString($cat, 'Ereignis', 'Letztes Ereignis', 60);
+        $this->EnsureString($cat, 'VideoEnde', 'Video zu Ende', 62);
+        $this->EnsureString($cat, 'PlaylistEnde', 'Playlist zu Ende', 64);
 
         return array('key' => $key, 'cat' => $cat, 'online' => $onl, 'playlist' => $pl,
-            'slide' => $sl, 'position' => $po);
+            'slide' => $sl, 'position' => $po, 'pause' => $pa,
+            'laufzeit' => $lz, 'rest' => $re, 'ende' => $en, 'beendet' => $be);
     }
 
     /** String-Variable im Player-Ordner anlegen, falls sie fehlt. */
     private function EnsureString($cat, $ident, $name, $pos)
     {
+        return $this->EnsureVar($cat, $ident, $name, 3, '', $pos);
+    }
+
+    /** Variable im Player-Ordner anlegen, falls sie fehlt ($typ: 0=bool,
+     *  1=int, 3=string). Name, Position und Profil nur beim Anlegen - eine
+     *  spaeter von Hand geaenderte Darstellung bleibt erhalten. */
+    private function EnsureVar($cat, $ident, $name, $typ, $profil, $pos)
+    {
         $vid = @IPS_GetObjectIDByIdent($ident, $cat);
         if (!$vid) {
-            $vid = IPS_CreateVariable(3);           // 3 = String
+            $vid = IPS_CreateVariable($typ);
             IPS_SetParent($vid, $cat);
             IPS_SetIdent($vid, $ident);
             IPS_SetName($vid, $name);
             IPS_SetPosition($vid, $pos);
+            if ($profil !== '') {
+                IPS_SetVariableCustomProfile($vid, $profil);
+            }
         }
         return $vid;
     }
