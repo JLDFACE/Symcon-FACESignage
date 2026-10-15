@@ -233,12 +233,16 @@ class FACESignage extends IPSModule
                 $this->SetObjIfChanged($o['slide'], $slide);
                 $this->SetObjIfChanged($o['position'], $nummer);
                 // Laufzeit der Folie, Rest und Endzeitpunkt - so frisch wie der
-                // Abruf (der Server rechnet den Rest zum Abrufzeitpunkt). Offline
-                // oder nichts Messbares: 0, kein alter Wert, der weiterzaehlt.
+                // Abruf (der Server rechnet den Rest zum Abrufzeitpunkt). Offline: 0.
+                // Online, aber (noch) nicht messbar - ein Video, dessen Laenge der
+                // Player nicht kennt: -1, NICHT 0. Mit 0 sah ein Skript "Rest 0 =
+                // zu Ende, naechster Film" sofort ein Ende und startete den Film
+                // alle paar Sekunden neu (SKUZ, Vorfilm 10/2026).
                 // "Beendet": eine Playlist ohne Wiederholung ist durch und steht.
+                $unbekannt = $on ? -1 : 0;
                 $this->SetObjIfChanged($o['pause'], $on && !empty($p['paused']));
-                $this->SetObjIfChanged($o['laufzeit'], $on && isset($p['laufzeit']) ? (int)$p['laufzeit'] : 0);
-                $this->SetObjIfChanged($o['rest'], $on && isset($p['rest']) ? (int)$p['rest'] : 0);
+                $this->SetObjIfChanged($o['laufzeit'], $on && isset($p['laufzeit']) ? (int)$p['laufzeit'] : $unbekannt);
+                $this->SetObjIfChanged($o['rest'], $on && isset($p['rest']) ? (int)$p['rest'] : $unbekannt);
                 $this->SetObjIfChanged($o['ende'], $on && isset($p['ende']) ? (int)$p['ende'] : 0);
                 $this->SetObjIfChanged($o['beendet'], $on && !empty($p['beendet']));
                 if ($preview) {
